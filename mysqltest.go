@@ -118,13 +118,34 @@ skip-networking
 		return nil, err
 	}
 
-	// Initialize MySQL data directory
-	init := prepareCommand(isRoot, path.Join(binPath, "mysql_install_db"),
-		fmt.Sprintf("--datadir=%s", dataDir),
+	// Figure out what we are running
+	version := prepareCommand(isRoot, path.Join(binPath, "mysql"),
+		"--version",
 	)
-	out, err := init.CombinedOutput()
+	out, err := version.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("Failed to initialize DB: %w -> %s", err, string(out))
+		return nil, fmt.Errorf("Failed to get version: %w -> %s", err, string(out))
+	}
+	isMariaDB := strings.Contains(string(out), "MariaDB")
+
+	// Initialize MySQL data directory
+	if isMariaDB {
+		init := prepareCommand(isRoot, path.Join(binPath, "mysql_install_db"),
+			fmt.Sprintf("--datadir=%s", dataDir),
+		)
+		out, err = init.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("Failed to initialize DB: %w -> %s", err, string(out))
+		}
+	} else {
+		init := prepareCommand(isRoot, path.Join(binPath, "mysqld_safe"),
+			"--initialize-insecure",
+			fmt.Sprintf("--datadir=%s", dataDir),
+		)
+		out, err = init.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("Failed to initialize DB: %w -> %s", err, string(out))
+		}
 	}
 
 	// Start MySQL
