@@ -1,7 +1,7 @@
-// Spawns a PostgreSQL server with a single database configured. Ideal for unit
+// Spawns a MySQL server with a single database configured. Ideal for unit
 // tests where you want a clean instance each time. Then clean up afterwards.
 //
-// Requires PostgreSQL to be installed on your system (but it doesn't have to be running).
+// Requires MySQL to be installed on your system (but it doesn't have to be running).
 package mysqltest
 
 import (
@@ -17,26 +17,26 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/go-sql-driver/mysql"
 )
 
-type PG struct {
+type MySQL struct {
 	dir string
 	cmd *exec.Cmd
 	DB  *sql.DB
 
 	stderr io.ReadCloser
 	stdout io.ReadCloser
+
+	isRoot   bool
+	binPath  string
+	sockFile string
 }
 
-// Start a new PostgreSQL database, on temporary storage.
-//
-// This database has fsync disabled for performance, so it might run faster
-// than your production database. This makes it less reliable in case of system
-// crashes, but we don't care about that anyway during unit testing.
+// Start a new MySQL database, on temporary storage.
 //
 // Use the DB field to access the database connection
-func Start() (*PG, error) {
+func Start() (*MySQL, error) {
 	// Handle dropping permissions when running as root
 	me, err := user.Current()
 	if err != nil {
@@ -44,35 +44,36 @@ func Start() (*PG, error) {
 	}
 	isRoot := me.Username == "root"
 
-	pgUID := int(0)
-	pgGID := int(0)
+	mysqlUID := int(0)
+	mysqlGID := int(0)
 	if isRoot {
-		pgUser, err := user.Lookup("postgres")
+		mysqlUser, err := user.Lookup("mysql")
 		if err != nil {
-			return nil, fmt.Errorf("Could not find postgres user, which is required when running as root: %s", err)
+			return nil, fmt.Errorf("Could not find mysql user, which is required when running as root: %s", err)
 		}
 
-		uid, err := strconv.ParseInt(pgUser.Uid, 10, 64)
+		uid, err := strconv.ParseInt(mysqlUser.Uid, 10, 64)
 		if err != nil {
 			return nil, err
 		}
-		pgUID = int(uid)
+		mysqlUID = int(uid)
 
-		gid, err := strconv.ParseInt(pgUser.Gid, 10, 64)
+		gid, err := strconv.ParseInt(mysqlUser.Gid, 10, 64)
 		if err != nil {
 			return nil, err
 		}
-		pgGID = int(gid)
+		mysqlGID = int(gid)
 	}
 
 	// Prepare data directory
-	dir, err := ioutil.TempDir("", "pgtest")
+	dir, err := ioutil.TempDir("", "mysqltest")
 	if err != nil {
 		return nil, err
 	}
 
 	dataDir := path.Join(dir, "data")
 	sockDir := path.Join(dir, "sock")
+	sockFile := path.Join(sockDir, "mysql.sock")
 
 	err = os.MkdirAll(dataDir, 0711)
 	if err != nil {
@@ -90,16 +91,26 @@ func Start() (*PG, error) {
 			return nil, err
 		}
 
-		err = os.Chown(dataDir, pgUID, pgGID)
+		err = os.Chown(dataDir, mysqlUID, mysqlGID)
 		if err != nil {
 			return nil, err
 		}
 
-		err = os.Chown(sockDir, pgUID, pgGID)
+		err = os.Chown(sockDir, mysqlUID, mysqlGID)
 		if err != nil {
 			return nil, err
 		}
 	}
+
+	// Write config file
+	configFile := path.Join(dir, "my.cnf")
+	err = ioutil.WriteFile(configFile, []byte(fmt.Sprintf(`[mysqld]
+datadir = %s
+socket = %s/mysql.sock
+general_log_file = %s/out.log
+general_log = 1
+skip-networking
+`, dataDir, sockDir, dir)), 0644)
 
 	// Find executables root path
 	binPath, err := findBinPath()
@@ -107,22 +118,19 @@ func Start() (*PG, error) {
 		return nil, err
 	}
 
-	// Initialize PostgreSQL data directory
-	init := prepareCommand(isRoot, path.Join(binPath, "initdb"),
-		"-D", dataDir,
-		"--no-sync",
+	// Initialize MySQL data directory
+	init := prepareCommand(isRoot, path.Join(binPath, "mysql_install_db"),
+		fmt.Sprintf("--defaults-file=%s", configFile),
+		fmt.Sprintf("--log-error=%s", path.Join(dir, "install.log")),
 	)
 	out, err := init.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("Failed to initialize DB: %w -> %s", err, string(out))
 	}
 
-	// Start PostgreSQL
-	cmd := prepareCommand(isRoot, path.Join(binPath, "postgres"),
-		"-D", dataDir, // Data directory
-		"-k", sockDir, // Location for the UNIX socket
-		"-h", "", // Disable TCP listening
-		"-F", // No fsync, just go fast
+	// Start MySQL
+	cmd := prepareCommand(isRoot, path.Join(binPath, "mysqld_safe"),
+		fmt.Sprintf("--defaults-file=%s", configFile),
 	)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
@@ -137,52 +145,46 @@ func Start() (*PG, error) {
 
 	err = cmd.Start()
 	if err != nil {
-		return nil, abort("Failed to start PostgreSQL", cmd, stderr, stdout, err)
+		return nil, abort("Failed to start database", cmd, stderr, stdout, err)
 	}
 
-	// Connect to DB
-	dsn := makeDSN(sockDir, "postgres", isRoot)
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		return nil, abort("Failed to connect to DB", cmd, stderr, stdout, err)
+	mysql := &MySQL{
+		cmd: cmd,
+		dir: dir,
+
+		stderr: stderr,
+		stdout: stdout,
+
+		isRoot:   isRoot,
+		binPath:  binPath,
+		sockFile: sockFile,
 	}
 
-	// Prepare test database
+	// Connect to DB, waiting for it to start
 	err = retry(func() error {
-		_, err := db.Exec("CREATE DATABASE test")
-		return err
+		dsn := makeDSN(sockFile, "test")
+		db, err := sql.Open("mysql", dsn)
+		if err != nil {
+			return err
+		}
+
+		err = db.Ping()
+		if err != nil {
+			return err
+		}
+
+		mysql.DB = db
+		return nil
 	}, 1000, 10*time.Millisecond)
-	if err != nil {
-		return nil, abort("Failed to initialize DB", cmd, stderr, stdout, err)
-	}
-
-	err = db.Close()
-	if err != nil {
-		return nil, abort("Failed to disconnect", cmd, stderr, stdout, err)
-	}
-
-	// Connect to it properly
-	dsn = makeDSN(sockDir, "test", isRoot)
-	db, err = sql.Open("postgres", dsn)
 	if err != nil {
 		return nil, abort("Failed to connect to test DB", cmd, stderr, stdout, err)
 	}
 
-	pg := &PG{
-		cmd: cmd,
-		dir: dir,
-
-		DB: db,
-
-		stderr: stderr,
-		stdout: stdout,
-	}
-
-	return pg, nil
+	return mysql, nil
 }
 
 // Stop the database and remove storage files.
-func (p *PG) Stop() error {
+func (p *MySQL) Stop() error {
 	if p == nil {
 		return nil
 	}
@@ -192,9 +194,15 @@ func (p *PG) Stop() error {
 		os.RemoveAll(p.dir)
 	}()
 
-	err := p.cmd.Process.Signal(os.Interrupt)
+	// mysqladmin -u root -S /tmp/mysqltest810067242/sock/mysql.sock shutdown
+	shutdown := prepareCommand(p.isRoot, path.Join(p.binPath, "mysqladmin"),
+		"-u", "root",
+		"-S", p.sockFile,
+		"shutdown",
+	)
+	out, err := shutdown.CombinedOutput()
 	if err != nil {
-		return err
+		return fmt.Errorf("Failed to shutdown DB: %w -> %s", err, string(out))
 	}
 
 	err = p.cmd.Wait()
@@ -216,50 +224,16 @@ func (p *PG) Stop() error {
 // Needed because Ubuntu doesn't put initdb in $PATH
 func findBinPath() (string, error) {
 	// In $PATH (e.g. Fedora) great!
-	p, err := exec.LookPath("initdb")
+	p, err := exec.LookPath("mysqld_safe")
 	if err == nil {
 		return path.Dir(p), nil
 	}
 
-	// Look for a PostgreSQL in one of the folders Ubuntu uses
-	folders := []string{
-		"/usr/lib/postgresql/",
-	}
-	for _, folder := range folders {
-		f, err := os.Stat(folder)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if !f.IsDir() {
-			continue
-		}
-
-		files, err := ioutil.ReadDir(folder)
-		if err != nil {
-			return "", err
-		}
-		for _, fi := range files {
-			if !fi.IsDir() {
-				continue
-			}
-
-			binPath := path.Join(folder, fi.Name(), "bin")
-			_, err := os.Stat(path.Join(binPath, "initdb"))
-			if err == nil {
-				return binPath, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("Did not find PostgreSQL executables installed")
+	return "", fmt.Errorf("Did not find MySQL / MariaDB executables installed")
 }
 
-func makeDSN(sockDir, dbname string, isRoot bool) string {
-	user := ""
-	if isRoot {
-		user = "user=postgres"
-	}
-	return fmt.Sprintf("host=%s dbname=%s %s", sockDir, dbname, user)
+func makeDSN(sockDir, dbname string) string {
+	return fmt.Sprintf("root@unix(%s)/%s", sockDir, dbname)
 }
 
 func retry(fn func() error, attempts int, interval time.Duration) error {
@@ -291,7 +265,7 @@ func prepareCommand(isRoot bool, command string, args ...string) *exec.Cmd {
 
 	return exec.Command("su",
 		"-",
-		"postgres",
+		"mysql",
 		"-c",
 		strings.Join(append([]string{command}, args...), " "),
 	)

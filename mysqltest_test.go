@@ -7,16 +7,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPostgreSQL(t *testing.T) {
+func TestMySQL(t *testing.T) {
 	assert := assert.New(t)
 
-	pg, err := mysqltest.Start()
+	mysql, err := mysqltest.Start()
 	assert.NoError(err)
-	assert.NotNil(pg)
+	assert.NotNil(mysql)
 
-	_, err = pg.DB.Exec("CREATE TABLE test (val text)")
+	_, err = mysql.DB.Exec("CREATE TABLE test (val text)")
 	assert.NoError(err)
 
-	err = pg.Stop()
+	err = mysql.Stop()
 	assert.NoError(err)
 }
