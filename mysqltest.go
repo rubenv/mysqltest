@@ -72,10 +72,16 @@ func Start() (*MySQL, error) {
 	}
 
 	dataDir := path.Join(dir, "data")
+	tmpDir := path.Join(dir, "tmp")
 	sockDir := path.Join(dir, "sock")
 	sockFile := path.Join(sockDir, "mysql.sock")
 
 	err = os.MkdirAll(dataDir, 0711)
+	if err != nil {
+		return nil, err
+	}
+
+	err = os.MkdirAll(tmpDir, 0711)
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +98,11 @@ func Start() (*MySQL, error) {
 		}
 
 		err = os.Chown(dataDir, mysqlUID, mysqlGID)
+		if err != nil {
+			return nil, err
+		}
+
+		err = os.Chown(tmpDir, mysqlUID, mysqlGID)
 		if err != nil {
 			return nil, err
 		}
@@ -141,6 +152,7 @@ skip-networking
 		init := prepareCommand(isRoot, path.Join(binPath, "mysqld_safe"),
 			"--initialize-insecure",
 			fmt.Sprintf("--datadir=%s", dataDir),
+			fmt.Sprintf("--tmpdir=%s", tmpDir),
 		)
 		out, err = init.CombinedOutput()
 		if err != nil {
