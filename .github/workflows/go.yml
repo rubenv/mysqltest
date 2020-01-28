@@ -16,7 +16,9 @@ jobs:
       uses: actions/checkout@v1
 
     - name: Install MariaDB
-      run: sudo apt install mariadb-server
+      run: |
+          sudo apt-get update
+          sudo apt-get install -yy mariadb-server
 
     - name: Get dependencies
       run: go get -v -t -d ./...
