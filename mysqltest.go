@@ -151,6 +151,7 @@ skip-networking
 	} else {
 		init := prepareCommand(isRoot, path.Join(binPath, "mysqld_safe"),
 			"--initialize-insecure",
+			fmt.Sprintf("--defaults-file=%s", configFile),
 			fmt.Sprintf("--datadir=%s", dataDir),
 			fmt.Sprintf("--tmpdir=%s", tmpDir),
 		)
