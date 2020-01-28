@@ -121,7 +121,6 @@ skip-networking
 	// Initialize MySQL data directory
 	init := prepareCommand(isRoot, path.Join(binPath, "mysql_install_db"),
 		fmt.Sprintf("--defaults-file=%s", configFile),
-		fmt.Sprintf("--log-error=%s", path.Join(dir, "install.log")),
 	)
 	out, err := init.CombinedOutput()
 	if err != nil {
