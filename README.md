@@ -1,28 +1,25 @@
-# pgtest
+# mysqltest
 
-> Go library to spawn single-use PostgreSQL servers for unit testing
+> Go library to spawn single-use MySQL / MariaDB servers for unit testing
 
-[![Build Status](https://github.com/rubenv/pgtest/workflows/Test/badge.svg)](https://github.com/rubenv/pgtest/actions) [![GoDoc](https://godoc.org/github.com/rubenv/pgtest?status.png)](https://godoc.org/github.com/rubenv/pgtest)
+[![Build Status](https://github.com/rubenv/mysqltest/workflows/Test/badge.svg)](https://github.com/rubenv/mysqltest/actions) [![GoDoc](https://godoc.org/github.com/rubenv/mysqltest?status.png)](https://godoc.org/github.com/rubenv/mysqltest)
 
-Spawns a PostgreSQL server with a single database configured. Ideal for unit
+Spawns a MySQL / MariaDB server with a single database configured. Ideal for unit
 tests where you want a clean instance each time. Then clean up afterwards.
 
 Features:
 
-* Starts a clean isolated PostgreSQL database
-* Tested on Fedora, Ubuntu and Alpine
-* Optimized for in-memory execution, to speed up unit tests
-* Less than 1 second startup / initialization time
-* Automatically drops permissions when testing as root
+* Starts a clean isolated MySQL / MariaDB database
+* Tested on Fedora and Ubuntu
 
 ## Usage
 
 In your unit test:
 ```go
-pg, err := pgtest.Start()
-defer pg.Stop()
+mysql, err := mysqltest.Start()
+defer mysql.Stop()
 
-// Do something with pg.DB (which is a *sql.DB)
+// Do something with mysql.DB (which is a *sql.DB)
 ```
 
 ## License
