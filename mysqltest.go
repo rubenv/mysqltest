@@ -2,7 +2,7 @@
 // tests where you want a clean instance each time. Then clean up afterwards.
 //
 // Requires PostgreSQL to be installed on your system (but it doesn't have to be running).
-package pgtest
+package mysqltest
 
 import (
 	"database/sql"

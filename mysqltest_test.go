@@ -1,16 +1,16 @@
-package pgtest_test
+package mysqltest_test
 
 import (
 	"testing"
 
-	"github.com/rubenv/pgtest"
+	"github.com/rubenv/mysqltest"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestPostgreSQL(t *testing.T) {
 	assert := assert.New(t)
 
-	pg, err := pgtest.Start()
+	pg, err := mysqltest.Start()
 	assert.NoError(err)
 	assert.NotNil(pg)
 
